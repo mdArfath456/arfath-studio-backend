@@ -10,5 +10,4 @@ public class StudioApplication {
 		SpringApplication.run(StudioApplication.class, args);
 		System.err.println("Started...");
 	}
-
 }
