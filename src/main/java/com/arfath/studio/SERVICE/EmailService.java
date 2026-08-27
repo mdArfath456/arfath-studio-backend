@@ -1,29 +1,43 @@
 package com.arfath.studio.SERVICE;
 
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+
 import com.arfath.studio.DTO.ContactRequest;
 import com.arfath.studio.ENTITY.ContactMessage;
 import com.arfath.studio.REPOSITORY.ContactMessageRepository;
-import com.resend.Resend;
-import com.resend.core.exception.ResendException;
-import com.resend.services.emails.model.CreateEmailOptions;
-import com.resend.services.emails.model.CreateEmailResponse;
-
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
 
 @Service
 public class EmailService {
 
 	private final ContactMessageRepository repository;
-	private final Resend resend;
+	private final WebClient webClient;
+	private final String inboxAddress;
+	private final String fromEmail;
+	private final String fromName;
 
-	@Value("${studio.contact.inbox}")
-	private String inboxAddress;
-
-	public EmailService(ContactMessageRepository repository, @Value("${RESEND_API_KEY}") String apiKey) {
+	public EmailService(
+			ContactMessageRepository repository,
+			@Value("${brevo.api-key}") String apiKey,
+			@Value("${studio.contact.inbox}") String inboxAddress,
+			@Value("${brevo.from-email}") String fromEmail,
+			@Value("${brevo.from-name}") String fromName) {
 
 		this.repository = repository;
-		this.resend = new Resend(apiKey);
+		this.inboxAddress = inboxAddress;
+		this.fromEmail = fromEmail;
+		this.fromName = fromName;
+		this.webClient = WebClient.builder()
+				.baseUrl("https://api.brevo.com/v3")
+				.defaultHeader("api-key", apiKey)
+				.defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+				.build();
 	}
 
 	public void handleContactSubmission(ContactRequest req) {
@@ -48,17 +62,25 @@ public class EmailService {
 				<p>%s</p>
 				""".formatted(req.getName(), req.getPhone(), req.getEmail(), req.getMessage());
 
-		CreateEmailOptions emailRequest = CreateEmailOptions.builder().from("Portfolio <onboarding@resend.dev>")
-				.to(inboxAddress).replyTo(req.getEmail()).subject("New project inquiry from " + req.getName())
-				.html(html).build();
+		Map<String, Object> payload = Map.of(
+				"sender", Map.of("name", fromName, "email", fromEmail),
+				"to", List.of(Map.of("email", inboxAddress)),
+				"replyTo", Map.of("email", req.getEmail(), "name", req.getName()),
+				"subject", "New project inquiry from " + req.getName(),
+				"htmlContent", html);
 
 		try {
-			CreateEmailResponse response = resend.emails().send(emailRequest);
+			webClient.post()
+					.uri("/smtp/email")
+					.bodyValue(payload)
+					.retrieve()
+					.toBodilessEntity()
+					.block();
 
-			System.out.println("Email sent successfully. ID: " + response.getId());
+			System.out.println("Email sent successfully via Brevo for inquiry from " + req.getName());
 
-		} catch (ResendException e) {
-			throw new RuntimeException("Failed to send email through Resend", e);
+		} catch (Exception e) {
+			throw new RuntimeException("Failed to send email through Brevo", e);
 		}
 	}
 }
